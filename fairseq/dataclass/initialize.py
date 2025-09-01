@@ -17,15 +17,23 @@ def hydra_init(cfg_name="config") -> None:
 
     cs = ConfigStore.instance()
     cs.store(name=cfg_name, node=FairseqConfig)
-
-    for k in FairseqConfig.__dataclass_fields__:
-        v = FairseqConfig.__dataclass_fields__[k].default
+    
+    # for k in FairseqConfig.__dataclass_fields__:
+    #     v = FairseqConfig.__dataclass_fields__[k].default
+    #     try:
+    #         cs.store(name=k, node=v)
+    #     except BaseException:
+    #         logger.error(f"{k} - {v}")
+    #         raise
+    fc = FairseqConfig()
+    fieldz = vars(fc)
+    for k in fieldz:
+        v = fieldz[k] #default values
         try:
             cs.store(name=k, node=v)
         except BaseException:
             logger.error(f"{k} - {v}")
             raise
-
 
 def add_defaults(cfg: DictConfig) -> None:
     """This function adds default values that are stored in dataclasses that hydra doesn't know about """
