@@ -14,6 +14,9 @@ import os
 import sys
 from typing import Dict, Optional, Any, List, Tuple, Callable
 
+import matplotlib.pyplot as plt
+from IPython.display import display
+
 import numpy as np
 import torch
 from fairseq import (
@@ -160,6 +163,19 @@ def main(cfg: FairseqConfig) -> None:
     lr = trainer.get_lr()
     train_meter = meters.StopwatchMeter()
     train_meter.start()
+    fig, axs = plt.subplots(ncols = 2)
+    x_epochs, y_train_loss, y_valid_loss, y_valid_wer = [], [], [], []
+    train_loss_curve, = axs[0].plot(x_epochs, y_train_loss, linestyle='dashdot', color = 'orange', label = 'Training Loss')
+    valid_loss_curve, = axs[0].plot(x_epochs, y_valid_loss, linestyle='dashed', color = 'blue', label = 'Validation Loss')
+    valid_wer_curve, = axs[1].plot(x_epochs, y_valid_wer, linestyle='solid', color='red', label = 'Validation WER')
+    axs[0].legend()
+    axs[0].set_xlabel('Epochs')
+    axs[0].set_ylabel('Loss')
+    axs[0].set_title('Generalization Curve (Loss)')
+    axs[1].legend()
+    axs[1].set_xlabel('Epochs')
+    axs[1].set_ylabel('WER')
+    axs[1].set_title('Validation Loss Curve (WER)')
     while epoch_itr.next_epoch_idx <= max_epoch:
         if lr <= cfg.optimization.stop_min_lr:
             logger.info(
@@ -170,7 +186,14 @@ def main(cfg: FairseqConfig) -> None:
             break
 
         # train for one epoch
-        valid_losses, should_stop = train(cfg, trainer, task, epoch_itr)
+        valid_losses, should_stop = train(cfg, trainer, task, epoch_itr, x_epochs, y_train_loss, y_valid_loss, y_valid_wer, train_loss_curve, valid_loss_curve, valid_wer_curve)
+
+        axs[0].relim()
+        axs[0].autoscale_view()
+        axs[1].relim()
+        axs[1].autoscale_view()
+        fig.savefig('/content/Vakyansh_CM.svg', format = 'svg', dpi = 300)
+
         if should_stop:
             break
 
@@ -227,7 +250,7 @@ def should_stop_early(cfg: DictConfig, valid_loss: float) -> bool:
 
 @metrics.aggregate("train")
 def train(
-    cfg: DictConfig, trainer: Trainer, task: tasks.FairseqTask, epoch_itr
+    cfg: DictConfig, trainer: Trainer, task: tasks.FairseqTask, epoch_itr, x_epochs, y_train_loss, y_valid_loss, y_valid_wer, train_loss_curve, valid_loss_curve, valid_wer_curve
 ) -> Tuple[List[Optional[float]], bool]:
     """Train the model for one epoch and return validation losses."""
     # Initialize data iterator
@@ -288,7 +311,7 @@ def train(
             num_updates = trainer.get_num_updates()
             if num_updates % cfg.common.log_interval == 0:
                 stats = get_training_stats(metrics.get_smoothed_values("train_inner"))
-                progress.log(stats, tag="train_inner", step=num_updates)
+                #progress.log(stats, tag="train_inner", step=num_updates)
 
                 # reset mid-epoch stats after each log interval
                 # the end-of-epoch stats will still be preserved
@@ -296,7 +319,7 @@ def train(
 
         end_of_epoch = not itr.has_next()
         valid_losses, should_stop = validate_and_save(
-            cfg, trainer, task, epoch_itr, valid_subsets, end_of_epoch
+            cfg, trainer, task, epoch_itr, valid_subsets, end_of_epoch, y_valid_loss, y_valid_wer
         )
 
         if should_stop:
@@ -305,6 +328,14 @@ def train(
     # log end-of-epoch stats
     logger.info("end of epoch {} (average epoch stats below)".format(epoch_itr.epoch))
     stats = get_training_stats(metrics.get_smoothed_values("train"))
+    # print(f"End of Epoch Avg Train Stats: {stats}")
+    x_epochs.append(epoch_itr.epoch)
+    y_train_loss.append(stats["loss"])
+
+    train_loss_curve.set_data(x_epochs, y_train_loss)
+    valid_loss_curve.set_data(x_epochs, y_valid_loss)
+    valid_wer_curve.set_data(x_epochs, y_valid_wer)
+
     progress.print(stats, tag="train", step=num_updates)
 
     # reset epoch-level meters
@@ -332,6 +363,8 @@ def validate_and_save(
     epoch_itr,
     valid_subsets: List[str],
     end_of_epoch: bool,
+    y_valid_loss,
+    y_valid_wer
 ) -> Tuple[List[Optional[float]], bool]:
     num_updates = trainer.get_num_updates()
     max_update = cfg.optimization.max_update or math.inf
@@ -382,7 +415,7 @@ def validate_and_save(
     # Validate
     valid_losses = [None]
     if do_validate:
-        valid_losses = validate(cfg, trainer, task, epoch_itr, valid_subsets)
+        valid_losses = validate(cfg, trainer, task, epoch_itr, valid_subsets, y_valid_loss, y_valid_wer)
 
     should_stop |= should_stop_early(cfg, valid_losses[0])
 
@@ -406,6 +439,8 @@ def validate(
     task: tasks.FairseqTask,
     epoch_itr,
     subsets: List[str],
+    y_valid_loss,
+    y_valid_wer
 ) -> List[Optional[float]]:
     """Evaluate the model on the validation set(s) and return the losses."""
 
@@ -457,6 +492,9 @@ def validate(
         # log validation stats
         stats = get_valid_stats(cfg, trainer, agg.get_smoothed_values())
         progress.print(stats, tag=subset, step=trainer.get_num_updates())
+        # print(f"End of Epoch Validation Stats: {stats}")
+        y_valid_loss.append(stats["loss"])
+        y_valid_wer.append(stats["wer"])
 
         valid_losses.append(stats[cfg.checkpoint.best_checkpoint_metric])
     return valid_losses
